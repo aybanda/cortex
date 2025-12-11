@@ -26,8 +26,9 @@ class TestCortexCLI(unittest.TestCase):
     @patch.dict(os.environ, {}, clear=True)
     @patch('sys.stderr')
     def test_get_api_key_not_found(self, mock_stderr):
+        # When no API key is set, falls back to Ollama local mode
         api_key = self.cli._get_api_key()
-        self.assertIsNone(api_key)
+        self.assertEqual(api_key, 'ollama-local')
     
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-test-openai-key-123'})
     def test_get_provider_openai(self):
@@ -169,8 +170,9 @@ class TestCortexCLI(unittest.TestCase):
     
     @patch('sys.argv', ['cortex'])
     def test_main_no_command(self):
+        # Running cortex with no command shows help and returns 0 (success)
         result = main()
-        self.assertEqual(result, 1)
+        self.assertEqual(result, 0)
     
     @patch('sys.argv', ['cortex', 'install', 'docker'])
     @patch('cortex.cli.CortexCLI.install')
