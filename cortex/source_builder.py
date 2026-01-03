@@ -228,7 +228,10 @@ class SourceBuilder:
         """Detect source location from package name."""
         # Try common patterns
         common_urls = {
-            "python": f"https://www.python.org/ftp/python/{version or '3.12.0'}/Python-{version or '3.12.0'}.tgz",
+            "python": (
+                f"https://www.python.org/ftp/python/{version or '3.12.0'}/"
+                f"Python-{version or '3.12.0'}.tgz"
+            ),
             "nginx": "https://nginx.org/download/nginx-1.24.0.tar.gz",
             "redis": f"https://download.redis.io/releases/redis-{version or '7.0'}.tar.gz",
         }

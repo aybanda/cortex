@@ -129,8 +129,9 @@ class CortexCLI:
 
         elif args.notify_action == "enable":
             mgr.config["enabled"] = True
-            # Addressing CodeRabbit feedback: Ideally should use a public method instead of private _save_config,
-            # but keeping as is for a simple fix (or adding a save method to NotificationManager would be best).
+            # Addressing CodeRabbit feedback: Ideally should use a public method
+            # instead of private _save_config, but keeping as is for a simple fix
+            # (or adding a save method to NotificationManager would be best).
             mgr._save_config()
             self._print_success("Notifications enabled")
             return 0
@@ -874,7 +875,8 @@ class CortexCLI:
                         packages += f" +{len(r.packages) - 2}"
 
                     print(
-                        f"{r.id:<18} {date:<20} {r.operation_type.value:<12} {packages:<30} {r.status.value:<15}"
+                        f"{r.id:<18} {date:<20} {r.operation_type.value:<12} "
+                        f"{packages:<30} {r.status.value:<15}"
                     )
 
                 return 0
@@ -1188,7 +1190,8 @@ class CortexCLI:
             return self._env_template_apply(env_mgr, args)
         else:
             self._print_error(
-                "Please specify: template list, template show <name>, or template apply <name> <app>"
+                "Please specify: template list, template show <name>, "
+                "or template apply <name> <app>"
             )
             return 1
 
