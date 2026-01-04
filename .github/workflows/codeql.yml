@@ -25,8 +25,7 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: python
-          # Use security-extended queries (adds to default queries)
-          queries: security-extended
+          # Use default queries to avoid conflict with GitHub's default CodeQL setup
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
