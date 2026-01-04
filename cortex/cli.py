@@ -1563,7 +1563,7 @@ class CortexCLI:
         if "@" in package_name and not version:
             parts = package_name.split("@")
             package_name = parts[0]
-            version = parts[1] if len(parts) > 1 else None
+            version = parts[1] if len(parts) > 1 and parts[1] else None
 
         cx_print(f"Building {package_name} from source...", "info")
         if version:
@@ -1597,8 +1597,6 @@ class CortexCLI:
             return 0
 
         # Execute install commands
-        from cortex.coordinator import InstallationCoordinator, InstallationStep, StepStatus
-
         def progress_callback(current: int, total: int, step: InstallationStep) -> None:
             status_emoji = "⏳"
             if step.status == StepStatus.SUCCESS:
@@ -1759,7 +1757,7 @@ def main():
         help="URL to source code (for --from-source)",
     )
     install_parser.add_argument(
-        "--version",
+        "--pkg-version",
         type=str,
         help="Version to build (for --from-source)",
     )
@@ -2006,7 +2004,7 @@ def main():
                 parallel=args.parallel,
                 from_source=getattr(args, "from_source", False),
                 source_url=getattr(args, "source_url", None),
-                version=getattr(args, "version", None),
+                version=getattr(args, "pkg_version", None),
             )
         elif args.command == "import":
             return cli.import_deps(args)

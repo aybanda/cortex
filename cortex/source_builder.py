@@ -208,10 +208,16 @@ class SourceBuilder:
 
             if archive_path.suffix == ".gz" or archive_path.suffixes[-2:] == [".tar", ".gz"]:
                 with tarfile.open(archive_path, "r:gz") as tar:
-                    tar.extractall(extract_dir)
+                    # Use filter='data' to prevent path traversal attacks (CVE-2007-4559)
+                    tar.extractall(extract_dir, filter="data")
             elif archive_path.suffix == ".zip":
                 with zipfile.ZipFile(archive_path, "r") as zip_ref:
-                    zip_ref.extractall(extract_dir)
+                    # Filter out path traversal components for security
+                    for member in zip_ref.namelist():
+                        # Skip files with path traversal or absolute paths
+                        if ".." in member or member.startswith("/"):
+                            continue
+                        zip_ref.extract(member, extract_dir)
 
             # Find the actual source directory (usually one level deep)
             extracted_items = list(extract_dir.iterdir())
@@ -294,7 +300,7 @@ class SourceBuilder:
             else:
                 # Default configure options
                 configure_cmd += f" --prefix={config.install_prefix}"
-                configure_cmd += " --enable-optimizations"
+                # Note: --enable-optimizations is Python-specific, not added by default
             commands.append(configure_cmd)
 
         elif config.build_system == "cmake":

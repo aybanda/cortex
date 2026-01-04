@@ -236,7 +236,7 @@ Planned improvements:
 
 ## See Also
 
-- [Installation Guide](Getting-Started.md)
-- [Dependency Resolution](README_DEPENDENCIES.md)
+- [Installation Guide](guides/Getting-Started.md)
+- [Dependency Resolution](modules/README_DEPENDENCIES.md)
 - [CLI Reference](COMMANDS.md)
 
