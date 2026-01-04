@@ -1749,7 +1749,9 @@ def main():
     install_parser.add_argument(
         "--from-source",
         action="store_true",
-        help="Build and install from source code when binaries unavailable",
+        help=(
+            "Build and install from source code when binaries unavailable"
+        ),
     )
     install_parser.add_argument(
         "--source-url",
