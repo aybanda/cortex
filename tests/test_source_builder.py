@@ -204,7 +204,9 @@ class TestSourceBuilder:
 
             # Mock the tarfile to return our structure
             def mock_extractall(path, members=None):
-                (Path(path) / "source-1.0").mkdir(parents=True)
+                # Handle both Path objects and strings
+                extract_path = Path(path) if not isinstance(path, Path) else path
+                (extract_path / "source-1.0").mkdir(parents=True)
 
             mock_tar.extractall = mock_extractall
 

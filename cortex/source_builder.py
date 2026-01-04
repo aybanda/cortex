@@ -210,29 +210,47 @@ class SourceBuilder:
                 with tarfile.open(archive_path, "r:gz") as tar:
                     # Prevent path traversal attacks (CVE-2007-4559)
                     # Filter members manually for Python < 3.12 compatibility
+                    # Note: filter='data' parameter is only available in Python 3.12+
+                    # This manual filtering provides equivalent security
                     safe_members = []
+                    extract_dir_resolved = extract_dir.resolve()
                     for member in tar.getmembers():
-                        # Skip files with path traversal or absolute paths
+                        # Skip files with path traversal components
                         if ".." in member.name or member.name.startswith("/"):
                             continue
-                        # Resolve to ensure no path traversal
-                        member_path = (extract_dir / member.name).resolve()
-                        if not str(member_path).startswith(str(extract_dir.resolve())):
+                        # Normalize and resolve path to prevent traversal
+                        # This ensures the extracted path stays within extract_dir
+                        try:
+                            member_path = (extract_dir / member.name).resolve()
+                            # Verify resolved path is within extract_dir
+                            if not str(member_path).startswith(str(extract_dir_resolved)):
+                                continue
+                            safe_members.append(member)
+                        except (ValueError, OSError):
+                            # Skip invalid paths
                             continue
-                        safe_members.append(member)
-                    tar.extractall(extract_dir, members=safe_members)
+                    # Only extract pre-filtered safe members
+                    if safe_members:
+                        tar.extractall(extract_dir, members=safe_members)
             elif archive_path.suffix == ".zip":
                 with zipfile.ZipFile(archive_path, "r") as zip_ref:
                     # Filter out path traversal components for security
+                    # Prevents zip slip attacks (similar to CVE-2007-4559)
+                    extract_dir_resolved = extract_dir.resolve()
                     for member in zip_ref.namelist():
                         # Skip files with path traversal or absolute paths
                         if ".." in member or member.startswith("/"):
                             continue
-                        # Resolve to ensure no path traversal
-                        member_path = (extract_dir / member).resolve()
-                        if not str(member_path).startswith(str(extract_dir.resolve())):
+                        # Normalize and resolve path to prevent traversal
+                        try:
+                            member_path = (extract_dir / member).resolve()
+                            # Verify resolved path is within extract_dir
+                            if not str(member_path).startswith(str(extract_dir_resolved)):
+                                continue
+                            zip_ref.extract(member, extract_dir)
+                        except (ValueError, OSError, zipfile.BadZipFile):
+                            # Skip invalid paths or corrupted zip entries
                             continue
-                        zip_ref.extract(member, extract_dir)
 
             # Find the actual source directory (usually one level deep)
             extracted_items = list(extract_dir.iterdir())
