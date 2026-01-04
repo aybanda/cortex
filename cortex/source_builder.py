@@ -208,14 +208,29 @@ class SourceBuilder:
 
             if archive_path.suffix == ".gz" or archive_path.suffixes[-2:] == [".tar", ".gz"]:
                 with tarfile.open(archive_path, "r:gz") as tar:
-                    # Use filter='data' to prevent path traversal attacks (CVE-2007-4559)
-                    tar.extractall(extract_dir, filter="data")
+                    # Prevent path traversal attacks (CVE-2007-4559)
+                    # Filter members manually for Python < 3.12 compatibility
+                    safe_members = []
+                    for member in tar.getmembers():
+                        # Skip files with path traversal or absolute paths
+                        if ".." in member.name or member.name.startswith("/"):
+                            continue
+                        # Resolve to ensure no path traversal
+                        member_path = (extract_dir / member.name).resolve()
+                        if not str(member_path).startswith(str(extract_dir.resolve())):
+                            continue
+                        safe_members.append(member)
+                    tar.extractall(extract_dir, members=safe_members)
             elif archive_path.suffix == ".zip":
                 with zipfile.ZipFile(archive_path, "r") as zip_ref:
                     # Filter out path traversal components for security
                     for member in zip_ref.namelist():
                         # Skip files with path traversal or absolute paths
                         if ".." in member or member.startswith("/"):
+                            continue
+                        # Resolve to ensure no path traversal
+                        member_path = (extract_dir / member).resolve()
+                        if not str(member_path).startswith(str(extract_dir.resolve())):
                             continue
                         zip_ref.extract(member, extract_dir)
 
