@@ -182,7 +182,12 @@ class SourceBuilder:
             return self._detect_source_location(package_name, version)
 
     def _fetch_from_url(self, url: str, package_name: str, version: str | None) -> Path:
-        """Fetch source from a URL."""
+        """Fetch source from a URL.
+
+        Note: The temporary directory is intentionally not cleaned up immediately
+        as the returned source directory may be used for building. Cleanup should
+        be handled by the caller or system temp file cleanup.
+        """
         temp_dir = Path(tempfile.mkdtemp(prefix=f"cortex-build-{package_name}-"))
 
         try:
@@ -254,11 +259,17 @@ class SourceBuilder:
             # Find the actual source directory (usually one level deep)
             extracted_items = list(extract_dir.iterdir())
             if len(extracted_items) == 1 and extracted_items[0].is_dir():
+                # Return the source directory (temp_dir will be cleaned up by system)
                 return extracted_items[0]
             else:
                 return extract_dir
 
         except Exception as e:
+            # Clean up temp directory on error
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass  # Best effort cleanup
             logger.exception(f"Failed to fetch source from {url}")
             raise RuntimeError(f"Failed to fetch source: {e}")
 
