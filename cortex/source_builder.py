@@ -12,30 +12,28 @@ from source code with automatic dependency detection and build system detection.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
-import os
-import re
 import shlex
 import shutil
-import subprocess
+import socket
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from cortex.branding import cx_print
 from cortex.dependency_resolver import DependencyResolver
-from cortex.utils.commands import CommandResult, run_command, validate_command
+from cortex.utils.commands import run_command
 
 logger = logging.getLogger(__name__)
 
-# Build cache directory
+# Build cache directory (created at runtime in SourceBuilder.__init__)
 CACHE_DIR = Path.home() / ".cortex" / "build_cache"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Common build dependencies by category
 BUILD_DEPENDENCIES = {
@@ -93,8 +91,23 @@ class SourceBuilder:
 
     def __init__(self):
         self.dependency_resolver = DependencyResolver()
-        self.cache_dir = CACHE_DIR
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Create cache directory at runtime with error handling
+        try:
+            self.cache_dir = CACHE_DIR
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            # Fallback to temp directory if cache directory creation fails
+            logger.warning(
+                f"Failed to create cache directory {CACHE_DIR}: {e}. "
+                "Using temporary directory instead."
+            )
+            self.cache_dir = Path(tempfile.gettempdir()) / "cortex-build-cache"
+            try:
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                # Last resort: set to None and disable caching
+                logger.error("Failed to create fallback cache directory. Caching disabled.")
+                self.cache_dir = None
 
     def _get_cache_key(self, package_name: str, version: str | None, source_url: str) -> str:
         """Generate a cache key for a build."""
@@ -103,6 +116,8 @@ class SourceBuilder:
 
     def _check_cache(self, cache_key: str) -> Path | None:
         """Check if a build is cached."""
+        if self.cache_dir is None:
+            return None
         cache_path = self.cache_dir / cache_key
         if cache_path.exists() and (cache_path / "installed").exists():
             return cache_path
@@ -110,6 +125,8 @@ class SourceBuilder:
 
     def _save_to_cache(self, cache_key: str, build_dir: Path, install_commands: list[str]) -> None:
         """Save build artifacts to cache."""
+        if self.cache_dir is None:
+            return  # Caching disabled
         cache_path = self.cache_dir / cache_key
         cache_path.mkdir(parents=True, exist_ok=True)
 
@@ -181,13 +198,90 @@ class SourceBuilder:
             # Try to detect source location
             return self._detect_source_location(package_name, version)
 
+    def _validate_url(self, url: str) -> None:
+        """Validate URL to prevent SSRF attacks.
+
+        Raises:
+            ValueError: If URL is invalid or potentially dangerous.
+        """
+        # Parse URL
+        parsed = urllib.parse.urlparse(url)
+
+        # Validate scheme - only allow http and https
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"Invalid URL scheme '{parsed.scheme}'. Only http and https are allowed."
+            )
+
+        # Validate hostname exists
+        if not parsed.netloc:
+            raise ValueError("URL must have a valid hostname.")
+
+        # Resolve hostname to IP addresses
+        try:
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError("URL must have a valid hostname.")
+
+            # Get all IP addresses for the hostname
+            ip_addresses = []
+            try:
+                # Try IPv4 first
+                ipv4 = socket.gethostbyname(hostname)
+                ip_addresses.append(ipaddress.IPv4Address(ipv4))
+            except (socket.gaierror, ValueError):
+                pass
+
+            # Check for IPv6 (if supported)
+            try:
+                addrinfo = socket.getaddrinfo(hostname, None, socket.AF_INET6)
+                for info in addrinfo:
+                    ipv6 = info[4][0]
+                    ip_addresses.append(ipaddress.IPv6Address(ipv6))
+            except (socket.gaierror, ValueError, OSError):
+                pass
+
+            if not ip_addresses:
+                raise ValueError(f"Could not resolve hostname '{hostname}' to an IP address.")
+
+            # Validate IP addresses - reject dangerous ranges
+            for ip in ip_addresses:
+                # Reject loopback addresses
+                if ip.is_loopback:
+                    raise ValueError(f"Loopback address {ip} is not allowed.")
+
+                # Reject link-local addresses
+                if ip.is_link_local:
+                    raise ValueError(f"Link-local address {ip} is not allowed.")
+
+                # Reject private RFC1918 addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+                if ip.is_private:
+                    raise ValueError(f"Private address {ip} is not allowed.")
+
+                # Reject metadata service addresses (169.254.169.254 for AWS, GCP, Azure)
+                if isinstance(ip, ipaddress.IPv4Address):
+                    if ip == ipaddress.IPv4Address("169.254.169.254"):
+                        raise ValueError(
+                            "Metadata service address (169.254.169.254) is not allowed."
+                        )
+
+        except socket.gaierror as e:
+            raise ValueError(f"Failed to resolve hostname '{parsed.hostname}': {e}") from e
+
     def _fetch_from_url(self, url: str, package_name: str, version: str | None) -> Path:
         """Fetch source from a URL.
 
         Note: The temporary directory is intentionally not cleaned up immediately
         as the returned source directory may be used for building. Cleanup should
         be handled by the caller or system temp file cleanup.
+
+        Raises:
+            ValueError: If URL validation fails (SSRF protection).
+            RuntimeError: If download or extraction fails.
         """
+        # Validate URL before any processing (SSRF protection)
+        self._validate_url(url)
+
         temp_dir = Path(tempfile.mkdtemp(prefix=f"cortex-build-{package_name}-"))
 
         try:
@@ -195,6 +289,7 @@ class SourceBuilder:
             cx_print(f"📥 Downloading {package_name} source...", "info")
             archive_path = temp_dir / "source.tar.gz"
 
+            # Modify GitHub URLs if needed (only after validation)
             if url.startswith("https://github.com/"):
                 # GitHub release or archive
                 if not url.endswith((".tar.gz", ".zip")):
@@ -202,6 +297,8 @@ class SourceBuilder:
                         url = f"{url}/archive/refs/tags/v{version}.tar.gz"
                     else:
                         url = f"{url}/archive/refs/heads/main.tar.gz"
+                    # Re-validate modified URL
+                    self._validate_url(url)
 
             urllib.request.urlretrieve(url, archive_path)
 

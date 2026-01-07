@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from cortex.api_key_detector import auto_detect_api_key, setup_api_key
 from cortex.ask import AskHandler
 from cortex.branding import VERSION, console, cx_header, cx_print, show_banner
@@ -1633,6 +1635,11 @@ class CortexCLI:
         """Handle installation from source."""
         from cortex.source_builder import SourceBuilder
 
+        # Initialize history for audit logging (same as install() method)
+        history = InstallationHistory()
+        install_id = None
+        start_time = datetime.now()
+
         builder = SourceBuilder()
 
         # Parse version from package name if specified (e.g., python@3.12)
@@ -1645,6 +1652,27 @@ class CortexCLI:
         if version:
             cx_print(f"Version: {version}", "info")
 
+        # Prepare commands list for history recording
+        # Include source URL in the commands list to track it
+        commands = []
+        if source_url:
+            commands.append(f"Source URL: {source_url}")
+        commands.append(f"Build from source: {package_name}")
+        if version:
+            commands.append(f"Version: {version}")
+
+        # Record installation start
+        if execute or dry_run:
+            try:
+                install_id = history.record_installation(
+                    InstallationType.INSTALL,
+                    [package_name],
+                    commands,
+                    start_time,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record installation start: {e}")
+
         result = builder.build_from_source(
             package_name=package_name,
             version=version,
@@ -1654,15 +1682,34 @@ class CortexCLI:
 
         if not result.success:
             self._print_error(f"Build failed: {result.error_message}")
+            # Record failed installation
+            if install_id:
+                try:
+                    history.update_installation(
+                        install_id,
+                        InstallationStatus.FAILED,
+                        error_message=result.error_message or "Build failed",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update installation record: {e}")
             return 1
 
         if result.cached:
             cx_print(f"Using cached build for {package_name}", "info")
 
+        # Add install commands to the commands list for history
+        commands.extend(result.install_commands)
+
         if dry_run:
             cx_print("\nBuild commands (dry run):", "info")
             for cmd in result.install_commands:
                 console.print(f"  • {cmd}")
+            # Record successful dry run
+            if install_id:
+                try:
+                    history.update_installation(install_id, InstallationStatus.SUCCESS)
+                except Exception as e:
+                    logger.warning(f"Failed to update installation record: {e}")
             return 0
 
         if not execute:
@@ -1670,6 +1717,12 @@ class CortexCLI:
             for cmd in result.install_commands:
                 console.print(f"  • {cmd}")
             cx_print("Run with --execute to install", "info")
+            # Record successful build (but not installed)
+            if install_id:
+                try:
+                    history.update_installation(install_id, InstallationStatus.SUCCESS)
+                except Exception as e:
+                    logger.warning(f"Failed to update installation record: {e}")
             return 0
 
         # Execute install commands
@@ -1693,11 +1746,28 @@ class CortexCLI:
 
         if install_result.success:
             self._print_success(f"{package_name} built and installed successfully!")
+            # Record successful installation
+            if install_id:
+                try:
+                    history.update_installation(install_id, InstallationStatus.SUCCESS)
+                    console.print(f"\n📝 Installation recorded (ID: {install_id})")
+                    console.print(f"   To rollback: cortex rollback {install_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to update installation record: {e}")
             return 0
         else:
             self._print_error("Installation failed")
+            error_msg = install_result.error_message or "Installation failed"
             if install_result.error_message:
-                console.print(f"Error: {install_result.error_message}", style="red")
+                console.print(f"Error: {error_msg}", style="red")
+            # Record failed installation
+            if install_id:
+                try:
+                    history.update_installation(
+                        install_id, InstallationStatus.FAILED, error_message=error_msg
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update installation record: {e}")
             return 1
 
     # --------------------------
