@@ -2895,6 +2895,7 @@ class CortexCLI:
               is used.
         """
         from cortex.source_builder import SourceBuilder
+        from cortex.sandbox.sandbox_executor import SandboxExecutor
 
         # Initialize history for audit logging (same as install() method)
         history = InstallationHistory()
@@ -2915,47 +2916,55 @@ class CortexCLI:
         if source_url:
             cx_print(f"Source URL: {source_url}", "info")
 
-        # Prepare install_id for history recording
+        # Do NOT record installation start yet - wait until after build completes
+        # so we can record the actual install commands
         install_id = None
-
-        # Record installation start with just the package name
-        # (actual commands will be determined after build)
-        if execute or dry_run:
-            try:
-                install_id = history.record_installation(
-                    InstallationType.INSTALL,
-                    [package_name],
-                    [],  # Commands will be recorded with the actual build commands
-                    start_time,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record installation start: {e}")
-                cx_print(f"⚠️  Warning: Could not record installation start: {e}", "warning")
 
         result = builder.build_from_source(
             package_name=package_name,
             version=version,
             source_url=source_url,
             use_cache=True,
+            dry_run=dry_run,  # Pass dry_run to skip full build in dry-run mode
         )
 
         if not result.success:
             self._print_error(f"Build failed: {result.error_message}")
-            # Record failed installation
-            if install_id:
+            # Record failed installation (only if we have real install commands)
+            if result.install_commands and result.build_dir != "<dry-run-no-dir>":
                 try:
+                    install_id = history.record_installation(
+                        InstallationType.INSTALL,
+                        [package_name],
+                        result.install_commands,
+                        start_time,
+                    )
                     history.update_installation(
                         install_id,
                         InstallationStatus.FAILED,
                         error_message=result.error_message or "Build failed",
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to update installation record: {e}")
-                    cx_print(f"⚠️  Warning: Could not update installation record: {e}", "warning")
+                    logger.warning(f"Failed to record installation failure: {e}")
+                    cx_print(f"⚠️  Warning: Could not record installation failure: {e}", "warning")
             return 1
 
         if result.cached:
             cx_print(f"Using cached build for {package_name}", "info")
+
+        # Record successful build/plan now that we have the actual install commands
+        # Record for all scenarios (dry-run, build-only, and execute)
+        try:
+            install_id = history.record_installation(
+                InstallationType.INSTALL,
+                [package_name],
+                result.install_commands,
+                start_time,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record installation: {e}")
+            cx_print(f"⚠️  Warning: Could not record installation: {e}", "warning")
+            install_id = None
 
         # Use only actual install commands for history and execution
         commands = result.install_commands
@@ -2996,15 +3005,57 @@ class CortexCLI:
                 status_emoji = "❌"
             console.print(f"[{current}/{total}] {status_emoji} {step.description}")
 
+        # Wrap install commands with Firejail sandbox for security
+        sandbox_executor = SandboxExecutor()
+        sandboxed_commands = []
+        
+        if sandbox_executor.is_firejail_available():
+            cx_print("🔒 Running build/install commands in Firejail sandbox", "info")
+            for cmd in result.install_commands:
+                # For sandboxed execution, the sandbox executor handles the wrapping
+                sandboxed_commands.append(cmd)
+        else:
+            cx_print("⚠️  Firejail not available - running commands without sandboxing", "warning")
+            sandboxed_commands = result.install_commands
+
         coordinator = InstallationCoordinator(
-            commands=result.install_commands,
-            descriptions=[f"Install {package_name}" for _ in result.install_commands],
+            commands=sandboxed_commands,
+            descriptions=[f"Install {package_name}" for _ in sandboxed_commands],
             timeout=600,
             stop_on_error=True,
             progress_callback=progress_callback,
         )
 
-        install_result = coordinator.execute()
+        # Execute commands with sandbox executor for each command
+        # If Firejail is available, wrap execution; otherwise use direct execution
+        if sandbox_executor.is_firejail_available():
+            # Execute each command through sandbox executor
+            all_success = True
+            for i, cmd in enumerate(sandboxed_commands, 1):
+                try:
+                    execution_result = sandbox_executor.execute(cmd, dry_run=False)
+                    if not execution_result.success:
+                        all_success = False
+                        logger.error(f"Sandboxed command failed: {cmd}\nError: {execution_result.stderr}")
+                        console.print(f"[{i}/{len(sandboxed_commands)}] ❌ Command failed: {cmd}", style="red")
+                        if True:  # stop_on_error=True
+                            break
+                    else:
+                        console.print(f"[{i}/{len(sandboxed_commands)}] ✅ Completed: {cmd}")
+                except Exception as e:
+                    logger.error(f"Sandbox execution error for '{cmd}': {e}")
+                    console.print(f"[{i}/{len(sandboxed_commands)}] ❌ Execution error: {e}", style="red")
+                    all_success = False
+                    if True:  # stop_on_error=True
+                        break
+            
+            install_result = InstallationResult(
+                success=all_success,
+                error_message=None if all_success else "One or more sandboxed commands failed"
+            )
+        else:
+            # Fall back to normal coordinator execution without sandbox
+            install_result = coordinator.execute()
 
         if install_result.success:
             self._print_success(f"{package_name} built and installed successfully!")
@@ -3014,6 +3065,7 @@ class CortexCLI:
                     history.update_installation(install_id, InstallationStatus.SUCCESS)
                     console.print(f"\n📝 Installation recorded (ID: {install_id})")
                     console.print(f"   To rollback: cortex rollback {install_id}")
+
                 except Exception as e:
                     logger.warning(f"Failed to update installation record: {e}")
                     cx_print(f"⚠️  Warning: Could not record installation success: {e}", "warning")

@@ -573,6 +573,7 @@ class SourceBuilder:
         make_args: list[str] | None = None,
         install_prefix: str = "/usr/local",
         use_cache: bool = True,
+        dry_run: bool = False,
     ) -> BuildResult:
         """Build and install a package from source.
 
@@ -585,6 +586,7 @@ class SourceBuilder:
             make_args: Additional make arguments for compilation.
             install_prefix: Installation prefix (default: /usr/local).
             use_cache: Whether to use build cache for faster rebuilds.
+            dry_run: If True, skip actual build and return planned build result without executing.
 
         Returns:
             BuildResult with build information, success status, and install commands.
@@ -593,6 +595,26 @@ class SourceBuilder:
             RuntimeError: If source download, configuration, or build fails.
         """
         try:
+            # Handle dry-run mode: skip actual build and return planned result
+            if dry_run:
+                cx_print(f"🏗️  [DRY-RUN] Would build {package_name}", "info")
+                if version:
+                    cx_print(f"         Version: {version}", "info")
+                if source_url:
+                    cx_print(f"         Source: {source_url}", "info")
+                # Return a planned build result without executing
+                return BuildResult(
+                    success=True,
+                    package_name=package_name,
+                    version=version,
+                    build_dir="<dry-run-no-dir>",
+                    install_commands=[
+                        f"sudo make install",  # Planned install command for dry-run
+                    ],
+                    error_message=None,
+                    cached=False,
+                )
+
             # Check cache
             cache_key = None
             if use_cache and source_url:
