@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 from cortex.api_key_detector import auto_detect_api_key, setup_api_key
 from cortex.ask import AskHandler
 from cortex.branding import VERSION, console, cx_header, cx_print, show_banner
-from cortex.coordinator import InstallationCoordinator, InstallationStep, StepStatus
+from cortex.coordinator import (
+    InstallationCoordinator,
+    InstallationResult,
+    InstallationStep,
+    StepStatus,
+)
 from cortex.demo import run_demo
 from cortex.dependency_importer import (
     DependencyImporter,
@@ -2894,8 +2899,8 @@ class CortexCLI:
             - Caching: Uses cached builds when available, printing a notification if cache
               is used.
         """
-        from cortex.source_builder import SourceBuilder
         from cortex.sandbox.sandbox_executor import SandboxExecutor
+        from cortex.source_builder import SourceBuilder
 
         # Initialize history for audit logging (same as install() method)
         history = InstallationHistory()
@@ -3005,57 +3010,22 @@ class CortexCLI:
                 status_emoji = "❌"
             console.print(f"[{current}/{total}] {status_emoji} {step.description}")
 
-        # Wrap install commands with Firejail sandbox for security
+        # Notify about sandbox availability for build/install commands
         sandbox_executor = SandboxExecutor()
-        sandboxed_commands = []
-        
         if sandbox_executor.is_firejail_available():
-            cx_print("🔒 Running build/install commands in Firejail sandbox", "info")
-            for cmd in result.install_commands:
-                # For sandboxed execution, the sandbox executor handles the wrapping
-                sandboxed_commands.append(cmd)
+            cx_print("🔒 Build/install commands will run in Firejail sandbox", "info")
         else:
             cx_print("⚠️  Firejail not available - running commands without sandboxing", "warning")
-            sandboxed_commands = result.install_commands
 
         coordinator = InstallationCoordinator(
-            commands=sandboxed_commands,
-            descriptions=[f"Install {package_name}" for _ in sandboxed_commands],
+            commands=result.install_commands,
+            descriptions=[f"Install {package_name}" for _ in result.install_commands],
             timeout=600,
             stop_on_error=True,
             progress_callback=progress_callback,
         )
 
-        # Execute commands with sandbox executor for each command
-        # If Firejail is available, wrap execution; otherwise use direct execution
-        if sandbox_executor.is_firejail_available():
-            # Execute each command through sandbox executor
-            all_success = True
-            for i, cmd in enumerate(sandboxed_commands, 1):
-                try:
-                    execution_result = sandbox_executor.execute(cmd, dry_run=False)
-                    if not execution_result.success:
-                        all_success = False
-                        logger.error(f"Sandboxed command failed: {cmd}\nError: {execution_result.stderr}")
-                        console.print(f"[{i}/{len(sandboxed_commands)}] ❌ Command failed: {cmd}", style="red")
-                        if True:  # stop_on_error=True
-                            break
-                    else:
-                        console.print(f"[{i}/{len(sandboxed_commands)}] ✅ Completed: {cmd}")
-                except Exception as e:
-                    logger.error(f"Sandbox execution error for '{cmd}': {e}")
-                    console.print(f"[{i}/{len(sandboxed_commands)}] ❌ Execution error: {e}", style="red")
-                    all_success = False
-                    if True:  # stop_on_error=True
-                        break
-            
-            install_result = InstallationResult(
-                success=all_success,
-                error_message=None if all_success else "One or more sandboxed commands failed"
-            )
-        else:
-            # Fall back to normal coordinator execution without sandbox
-            install_result = coordinator.execute()
+        install_result = coordinator.execute()
 
         if install_result.success:
             self._print_success(f"{package_name} built and installed successfully!")

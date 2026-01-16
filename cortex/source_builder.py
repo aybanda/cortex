@@ -609,7 +609,7 @@ class SourceBuilder:
                     version=version,
                     build_dir="<dry-run-no-dir>",
                     install_commands=[
-                        f"sudo make install",  # Planned install command for dry-run
+                        "sudo make install",  # Planned install command for dry-run
                     ],
                     error_message=None,
                     cached=False,
