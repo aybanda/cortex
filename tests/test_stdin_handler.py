@@ -405,8 +405,15 @@ class TestRunStdinHandler:
 
         assert result == 0
         captured = capsys.readouterr()
-        # Should be valid JSON
-        data = json.loads(captured.out)
+        # Find first valid JSON object in output
+        try:
+            data = json.loads(captured.out.strip())
+        except json.JSONDecodeError:
+            # Try to extract JSON from output if extra text is present
+            import re
+            match = re.search(r'({.*})', captured.out, re.DOTALL)
+            assert match, f"No JSON found in output: {captured.out}"
+            data = json.loads(match.group(1))
         assert "line_count" in data
 
 

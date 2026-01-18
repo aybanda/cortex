@@ -418,11 +418,10 @@ def run_stdin_handler(
         return 0
 
     elif action == "stats":
-        # Machine-readable stats
+        # Machine-readable stats (no console output)
         analysis = analyze_stdin(data)
         import json
-
-        print(json.dumps(analysis, indent=2))
+        sys.stdout.write(json.dumps(analysis, indent=2) + "\n")
         return 0
 
     else:
