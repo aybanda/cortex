@@ -3178,6 +3178,7 @@ def show_rich_help():
     table.add_row("update", "Check for and install updates")
     table.add_row("doctor", "System health check")
     table.add_row("troubleshoot", "Interactive system troubleshooter")
+    table.add_row("tarball-helper", "Tarball/manual build helper (analyze, install-deps, cleanup)")
 
     console.print(table)
     console.print()
@@ -3263,6 +3264,17 @@ def main():
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Register tarball-helper as a subparser command (before parse_args)
+    tarball_parser = subparsers.add_parser(
+        "tarball-helper", help="Tarball/manual build helper (analyze, install-deps, cleanup)"
+    )
+    tarball_parser.add_argument(
+        "action", choices=["analyze", "install-deps", "cleanup"], help="Action to perform"
+    )
+    tarball_parser.add_argument(
+        "path", nargs="?", help="Path to source directory (for analyze/install-deps)"
+    )
 
     # Define the docker command and its associated sub-actions
     docker_parser = subparsers.add_parser("docker", help="Docker and container utilities")
@@ -3914,6 +3926,42 @@ def main():
     # The Guard: Check for empty commands before starting the CLI
     if not args.command:
         show_rich_help()
+        return 0
+
+    # Register tarball-helper as a subparser command
+    tarball_parser = subparsers.add_parser(
+        "tarball-helper", help="Tarball/manual build helper (analyze, install-deps, cleanup)"
+    )
+    tarball_parser.add_argument(
+        "action", choices=["analyze", "install-deps", "cleanup"], help="Action to perform"
+    )
+    tarball_parser.add_argument(
+        "path", nargs="?", help="Path to source directory (for analyze/install-deps)"
+    )
+
+    # Handle tarball-helper command
+    if args.command == "tarball-helper":
+        from rich.console import Console
+        from rich.table import Table
+
+        from cortex.tarball_helper import TarballHelper
+
+        helper = TarballHelper()
+        if args.action == "analyze":
+            deps = helper.analyze(args.path or ".")
+            mapping = helper.suggest_apt_packages(deps)
+            table = Table(title="Suggested apt packages")
+            table.add_column("Dependency")
+            table.add_column("Apt Package")
+            for dep, pkg in mapping.items():
+                table.add_row(dep, pkg)
+            Console().print(table)
+        elif args.action == "install-deps":
+            deps = helper.analyze(args.path or ".")
+            mapping = helper.suggest_apt_packages(deps)
+            helper.install_deps(list(mapping.values()))
+        elif args.action == "cleanup":
+            helper.cleanup()
         return 0
 
     # Initialize the CLI handler
